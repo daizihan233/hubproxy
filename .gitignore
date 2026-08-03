@@ -3,6 +3,9 @@
 .vscode/
 .DS_Store
 
+# AI workspace
+.reasonix/
+
 # Go build artifacts
 /hubproxy*
 *.exe

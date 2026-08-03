@@ -6,7 +6,9 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -128,6 +130,19 @@ func main() {
 	handlers.InitDebouncer()
 
 	cfg := config.GetConfig()
+
+	// Azure Functions Custom Handler 模式：
+	// 当 FUNCTIONS_CUSTOMHANDLER_PORT 环境变量存在时，自动切换到 Azure Functions 监听端口，
+	// 绑定 127.0.0.1（仅接受 Functions Host 内部转发），并禁用 H2C（Functions 不支持）。
+	if port := os.Getenv("FUNCTIONS_CUSTOMHANDLER_PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil && p > 0 {
+			cfg.Server.Port = p
+			cfg.Server.Host = "127.0.0.1"
+			cfg.Server.EnableH2C = false
+			fmt.Printf("Azure Functions Custom Handler 模式: 监听 127.0.0.1:%d\n", p)
+		}
+	}
+
 	router := buildRouter(cfg)
 
 	fmt.Printf("HubProxy 启动成功\n")

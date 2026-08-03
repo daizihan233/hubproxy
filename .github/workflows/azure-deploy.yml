@@ -1,0 +1,86 @@
+name: Deploy to Azure Functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'web/**'
+      - 'azure/**'
+      - 'build-azure.ps1'
+      - '.github/workflows/azure-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（例如 v1.0.0）'
+        required: false
+        default: 'latest'
+
+env:
+  AZURE_FUNCTIONAPP_NAME: ${{ vars.AZURE_FUNCTIONAPP_NAME }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'src/go.mod'
+          cache-dependency-path: 'src/go.sum'
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: web/package.json
+          cache-dependency-path: web/package-lock.json
+
+      - name: 构建前端
+        run: |
+          cd web
+          npm ci
+          npm run build
+
+      - name: 确定版本号
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.version }}" != "latest" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="$(date -u +%Y%m%d)-${GITHUB_SHA::7}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "版本号: $VERSION"
+
+      - name: 编译 Go 二进制 (linux/amd64)
+        run: |
+          cd src
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -ldflags="-s -w -X main.Version=${{ steps.version.outputs.version }}" \
+            -trimpath -o hubproxy .
+
+      - name: 组装 Azure Functions 部署目录
+        run: |
+          mkdir -p deploy/proxy
+          cp azure/host.json deploy/
+          cp azure/proxy/function.json azure/proxy/__init__.py deploy/proxy/
+          cp src/hubproxy deploy/
+          chmod +x deploy/hubproxy
+          cp src/config.toml deploy/
+
+      - name: 打包部署文件
+        run: cd deploy && zip -r ../deploy-package.zip .
+
+      - name: 部署到 Azure Functions
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+          package: deploy-package.zip
