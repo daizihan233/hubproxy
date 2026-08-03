@@ -15,6 +15,16 @@ on:
         description: '版本号（例如 v1.0.0）'
         required: false
         default: 'latest'
+      create_release:
+        description: '创建 GitHub Release 附带部署包（可手动下载上传）'
+        type: boolean
+        required: false
+        default: false
+      deploy:
+        description: '尝试自动部署到 Azure Functions'
+        type: boolean
+        required: false
+        default: true
 
 env:
   AZURE_FUNCTIONAPP_NAME: ${{ vars.AZURE_FUNCTIONAPP_NAME }}
@@ -78,7 +88,32 @@ jobs:
       - name: 打包部署文件
         run: cd deploy && zip -r ../deploy-package.zip .
 
+      # 先上传 artifact：即使后面的自动部署失败，也能从 Actions 页面下载 zip 手动上传
+      - name: 上传部署包 (Actions Artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: hubproxy-azure-${{ steps.version.outputs.version }}
+          path: deploy-package.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 创建 GitHub Release（手动触发时可选）
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: azure-deploy-${{ steps.version.outputs.version }}
+          name: "HubProxy Azure 部署包 ${{ steps.version.outputs.version }}"
+          body: |
+            Azure Functions Custom Handler 部署包。
+
+            手动部署步骤见 `docs/azure-functions.md`：
+            1. 下载 `deploy-package.zip`
+            2. Azure Portal → Function App → 部署中心（或直接上传 zip）
+          files: deploy-package.zip
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: 部署到 Azure Functions
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.deploy == 'true'
         uses: Azure/functions-action@v1
         with:
           app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}

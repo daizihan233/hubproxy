@@ -105,10 +105,70 @@ npm ci + npm run build (前端)
   → CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build (Go 二进制)
     → 组装 deploy/ (host.json + proxy/ + hubproxy + config.toml)
       → zip 打包
-        → Azure/functions-action@v1 部署
+        → ① 上传 Actions Artifact（始终执行）
+        → ② 可选创建 GitHub Release
+        → ③ Azure/functions-action@v1 自动部署（失败不影响 ①②）
 ```
 
-## 三、本地构建（可选）
+### 手动触发选项
+
+Actions → Deploy to Azure Functions → **Run workflow** 时可选：
+
+| 输入项 | 说明 |
+|--------|------|
+| `version` | 版本号，默认 `latest`（自动生成 `日期-SHA前7位`） |
+| `create_release` | 勾选后创建 GitHub Release 并附带部署包 |
+| `deploy` | 取消勾选则跳过自动部署（只构建+传 artifact） |
+
+### 自动部署失败时的处理
+
+workflow 会**先上传 Actions Artifact 再尝试自动部署**，所以即使 `Azure/functions-action` 失败，部署包也已安全保存在 Actions 页面：
+
+1. 进入 Actions → 失败的 run → 底部 **Artifacts** 区域
+2. 下载 `hubproxy-azure-<版本>.zip`
+3. 按下方「手动上传」步骤部署
+
+## 三、手动上传部署包
+
+当自动部署失败或你想完全掌控部署时，用 Azure Portal 直接上传 zip：
+
+### 方式一：部署中心（推荐）
+
+1. Azure Portal → 你的 Function App → **部署中心**
+2. 选择 **外部 Git / 手动部署** 或 **上传文件**
+3. 上传 `deploy-package.zip`（从 Actions Artifact 或 GitHub Release 下载）
+
+### 方式二：SCM Kudu 控制台
+
+1. 打开 `https://<你的函数App>.scm.chinacloudsites.cn/`（中国区）或 `https://<你的函数App>.scm.azurewebsites.net/`（国际版）
+2. 登录后进入 **Debug console → CMD**
+3. 将 zip 上传到 `/home/site/wwwroot`，然后执行解压：
+   ```bash
+   cd /home/site/wwwroot
+   unzip -o deploy-package.zip
+   ```
+4. 重启 Function App
+
+### 方式三：Azure CLI（可选）
+
+```bash
+az functionapp deployment source config-zip \
+  --resource-group <资源组> \
+  --name <函数App名> \
+  --src deploy-package.zip
+```
+
+### 手动上传后的验证
+
+```bash
+curl https://<你的函数App>.azurewebsites.net/ready
+# 或绑定了域名后
+curl https://hubproxy.khbit.cn/ready
+```
+
+> **注意**：手动上传 zip 时，zip 的**根目录**必须直接包含 `host.json` 和 `proxy/` 文件夹（CI 打包的 `deploy-package.zip` 已满足此要求）。
+
+## 四、本地构建（可选）
 
 如果你需要在本地手动构建部署包：
 
@@ -121,7 +181,7 @@ npm ci + npm run build (前端)
 
 输出：`build/hubproxy-azure-amd64.zip`，可直接在 Azure Portal → Function App → 部署中心上传。
 
-## 四、注意事项
+## 五、注意事项
 
 ### 超时限制
 
