@@ -1,4 +1,4 @@
-name: Deploy to Azure Functions
+name: Deploy to Azure App Service
 
 on:
   push:
@@ -6,7 +6,6 @@ on:
     paths:
       - 'src/**'
       - 'web/**'
-      - 'azure/**'
       - 'build-azure.ps1'
       - '.github/workflows/azure-deploy.yml'
   workflow_dispatch:
@@ -20,14 +19,10 @@ on:
         type: boolean
         required: false
         default: false
-      deploy:
-        description: '尝试自动部署到 Azure Functions'
-        type: boolean
-        required: false
-        default: true
 
 env:
-  AZURE_FUNCTIONAPP_NAME: ${{ vars.AZURE_FUNCTIONAPP_NAME }}
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  AZURE_WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
 
 jobs:
   build-and-deploy:
@@ -76,23 +71,21 @@ jobs:
             go build -ldflags="-s -w -X main.Version=${{ steps.version.outputs.version }}" \
             -trimpath -o hubproxy .
 
-      - name: 组装 Azure Functions 部署目录
+      - name: 组装 App Service 部署包
         run: |
-          mkdir -p deploy/proxy
-          cp azure/host.json deploy/
-          cp azure/proxy/function.json azure/proxy/__init__.py deploy/proxy/
+          mkdir -p deploy
           cp src/hubproxy deploy/
           chmod +x deploy/hubproxy
           cp src/config.toml deploy/
+          cp build/startup.sh deploy/
 
       - name: 打包部署文件
         run: cd deploy && zip -r ../deploy-package.zip .
 
-      # 先上传 artifact：即使后面的自动部署失败，也能从 Actions 页面下载 zip 手动上传
       - name: 上传部署包 (Actions Artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: hubproxy-azure-${{ steps.version.outputs.version }}
+          name: hubproxy-appservice-${{ steps.version.outputs.version }}
           path: deploy-package.zip
           if-no-files-found: error
           retention-days: 30
@@ -101,21 +94,19 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: azure-deploy-${{ steps.version.outputs.version }}
-          name: "HubProxy Azure 部署包 ${{ steps.version.outputs.version }}"
+          tag_name: appservice-deploy-${{ steps.version.outputs.version }}
+          name: "HubProxy App Service 部署包 ${{ steps.version.outputs.version }}"
           body: |
-            Azure Functions Custom Handler 部署包。
+            Linux App Service 部署包。
 
-            手动部署步骤见 `docs/azure-functions.md`：
-            1. 下载 `deploy-package.zip`
-            2. Azure Portal → Function App → 部署中心（或直接上传 zip）
+            部署步骤见 `docs/azure-functions.md`。
+            手动部署：Azure Portal → App Service → 部署中心 → 上传 zip
           files: deploy-package.zip
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 部署到 Azure Functions
-        if: github.event_name != 'workflow_dispatch' || github.event.inputs.deploy == 'true'
-        uses: Azure/functions-action@v1
+      - name: 部署到 Azure App Service
+        uses: Azure/webapps-deploy@v3
         with:
-          app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
-          publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           package: deploy-package.zip
